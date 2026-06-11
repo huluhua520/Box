@@ -2,6 +2,7 @@ package com.github.tvbox.osc.util;
 
 import android.content.Context;
 
+import com.blankj.utilcode.util.ToastUtils;
 import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.bean.IJKCode;
 import com.github.tvbox.osc.player.EXOmPlayer;
@@ -13,26 +14,34 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import tv.danmaku.ijk.media.player.IjkMediaPlayer;
+import xyz.doikki.videoplayer.aliplayer.AliyunMediaPlayerFactory;
 import xyz.doikki.videoplayer.player.AndroidMediaPlayerFactory;
 import xyz.doikki.videoplayer.player.PlayerFactory;
 import xyz.doikki.videoplayer.player.VideoView;
+import xyz.doikki.videoplayer.render.PlayerViewRenderViewFactory;
 import xyz.doikki.videoplayer.render.RenderViewFactory;
 import xyz.doikki.videoplayer.render.TextureRenderViewFactory;
 
 public class PlayerHelper {
     public static void updateCfg(VideoView videoView, JSONObject playerCfg) {
+        updateCfg(videoView, playerCfg, -1);
+    }
+
+    public static void updateCfg(VideoView videoView, JSONObject playerCfg, int forcePlayerType) {
         int playerType = Hawk.get(HawkConfig.PLAY_TYPE, 0);
         int renderType = Hawk.get(HawkConfig.PLAY_RENDER, 0);
         String ijkCode = Hawk.get(HawkConfig.IJK_CODEC, "软解码");
         int scale = Hawk.get(HawkConfig.PLAY_SCALE, 0);
         try {
             playerType = playerCfg.getInt("pl");
-            renderType = playerCfg.getInt("pr");
+            //就我遇到的问题是 Exo 在 TextureView 黑屏 调整设置中的渲染模式无法生效
+            //renderType = playerCfg.getInt("pr");//该值无法修改，一旦确认该值后续无法进行修改 就是在设置选的 类型无法应用
             ijkCode = playerCfg.getString("ijk");
             scale = playerCfg.getInt("sc");
         } catch (JSONException e) {
             e.printStackTrace();
         }
+        if (forcePlayerType >= 0) playerType = forcePlayerType;
         IJKCode codec = ApiConfig.get().getIJKCodec(ijkCode);
         PlayerFactory playerFactory;
         if (playerType == 1) {
@@ -49,19 +58,26 @@ public class PlayerHelper {
                     return new EXOmPlayer(context);
                 }
             };
+        } else if (playerType == 3) {
+            playerFactory = AliyunMediaPlayerFactory.create();
         } else {
             playerFactory = AndroidMediaPlayerFactory.create();
         }
         RenderViewFactory renderViewFactory = null;
-        switch (renderType) {
-            case 0:
-            default:
-                renderViewFactory = TextureRenderViewFactory.create();
-                break;
-            case 1:
-                renderViewFactory = SurfaceRenderViewFactory.create();
-                break;
+        if (playerType==2){
+            renderViewFactory = PlayerViewRenderViewFactory.create(renderType);
+        }else{
+            switch (renderType) {
+                case 0:
+                default:
+                    renderViewFactory = TextureRenderViewFactory.create();
+                    break;
+                case 1:
+                    renderViewFactory = SurfaceRenderViewFactory.create();
+                    break;
+            }
         }
+
         videoView.setPlayerFactory(playerFactory);
         videoView.setRenderViewFactory(renderViewFactory);
         videoView.setScreenScaleType(scale);
@@ -85,6 +101,8 @@ public class PlayerHelper {
                     return new EXOmPlayer(context);
                 }
             };
+        } else if (playType == 3) {
+            playerFactory = AliyunMediaPlayerFactory.create();
         } else {
             playerFactory = AndroidMediaPlayerFactory.create();
         }
@@ -112,6 +130,8 @@ public class PlayerHelper {
             return "IJK";
         } else if (playType == 2) {
             return "Exo";
+        } else if (playType == 3) {
+            return "阿里";
         } else if (playType == 10) {
             return "MX";
         } else if (playType == 11) {
@@ -155,4 +175,13 @@ public class PlayerHelper {
         }
         return scaleText;
     }
+
+    public static String getRootCauseMessage(Throwable th) {
+        for (int i=0; i<10; i++) {
+            if (th.getCause() == null) return th.getLocalizedMessage();
+            else th = th.getCause();
+        }
+        return th.getLocalizedMessage();
+    }
+
 }

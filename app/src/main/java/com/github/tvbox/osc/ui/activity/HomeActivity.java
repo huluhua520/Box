@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity;
 
 import android.Manifest;
+import android.content.Context;
 import android.animation.Animator;
 import android.animation.AnimatorSet;
 import android.animation.IntEvaluator;
@@ -20,6 +21,8 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AccelerateInterpolator;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
 import android.view.animation.BounceInterpolator;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -29,11 +32,14 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
+import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.recyclerview.widget.DiffUtil;
+import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager.widget.ViewPager;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.api.ApiConfig;
+import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.base.BaseLazyFragment;
 import com.github.tvbox.osc.bean.AbsSortXml;
@@ -54,9 +60,11 @@ import com.github.tvbox.osc.ui.tv.widget.NoScrollViewPager;
 import com.github.tvbox.osc.ui.tv.widget.ViewObj;
 import com.github.tvbox.osc.util.AppManager;
 import com.github.tvbox.osc.util.DefaultConfig;
+import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
+import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
 import com.orhanobut.hawk.Hawk;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
@@ -74,6 +82,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 
 import me.jessyan.autosize.utils.AutoSizeUtils;
 
@@ -111,7 +120,8 @@ public class HomeActivity extends BaseActivity {
         public void run() {
             Date date = new Date();
             @SuppressLint("SimpleDateFormat")
-            SimpleDateFormat timeFormat = new SimpleDateFormat(getString(R.string.hm_date1) + ", " + getString(R.string.hm_date2));
+			//修改时间分隔符
+            SimpleDateFormat timeFormat = new SimpleDateFormat(getString(R.string.hm_date1) + " | " + getString(R.string.hm_date2));
             tvDate.setText(timeFormat.format(date));
             mHandler.postDelayed(this, 1000);
         }
@@ -131,6 +141,7 @@ public class HomeActivity extends BaseActivity {
 
         EventBus.getDefault().register(this);
         ControlManager.get().startServer();
+        App.startWebserver();
         initView();
         initViewModel();
         useCacheConfig = false;
@@ -163,6 +174,18 @@ public class HomeActivity extends BaseActivity {
         this.mGridView.setLayoutManager(new V7LinearLayoutManager(this.mContext, 0, false));
         this.mGridView.setSpacingWithMargins(0, AutoSizeUtils.dp2px(this.mContext, 10.0f));
         this.mGridView.setAdapter(this.sortAdapter);
+        sortAdapter.registerAdapterDataObserver(new RecyclerView.AdapterDataObserver() {
+            @Override
+            public void onChanged() {
+                mGridView.post(() -> {
+                    View firstChild = Objects.requireNonNull(mGridView.getLayoutManager()).findViewByPosition(0);
+                    if (firstChild != null) {
+                        mGridView.setSelectedPosition(0);
+                        firstChild.requestFocus();
+                    }
+                });
+            }
+        });
         this.mGridView.setOnItemListener(new TvRecyclerView.OnItemListener() {
             public void onItemPreSelected(TvRecyclerView tvRecyclerView, View view, int position) {
                 if (view != null && !HomeActivity.this.isDownOrUp) {
@@ -187,9 +210,12 @@ public class HomeActivity extends BaseActivity {
                     textView.invalidate();
 //                    if (!sortAdapter.getItem(position).filters.isEmpty())
 //                        view.findViewById(R.id.tvFilter).setVisibility(View.VISIBLE);
-
+                    if (position == -1) {
+                        position = 0;
+                        HomeActivity.this.mGridView.setSelection(0);
+                    }
                     MovieSort.SortData sortData = sortAdapter.getItem(position);
-                    if (!sortData.filters.isEmpty()) {
+                    if (null != sortData && !sortData.filters.isEmpty()) {
                         showFilterIcon(sortData.filterSelectCount());
                     }
                     HomeActivity.this.sortFocusView = view;
@@ -233,14 +259,31 @@ public class HomeActivity extends BaseActivity {
         tvName.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-//                dataInitOk = false;
-//                jarInitOk = true;
-//                showSiteSwitch();
+                FastClickCheckUtil.check(v);
                 File dir = getCacheDir();
                 FileUtils.recursiveDelete(dir);
                 dir = getExternalCacheDir();
                 FileUtils.recursiveDelete(dir);
                 Toast.makeText(HomeActivity.this, getString(R.string.hm_cache_del), Toast.LENGTH_SHORT).show();
+                if(dataInitOk && jarInitOk){
+                    String cspCachePath = FileUtils.getFilePath()+"/csp/";
+                    String jar=ApiConfig.get().getHomeSourceBean().getJar();
+                    String jarUrl=!jar.isEmpty()?jar:ApiConfig.get().getSpider();
+                    File cspCacheDir = new File(cspCachePath + MD5.string2MD5(jarUrl)+".jar");
+                    if (!cspCacheDir.exists()){
+                        reloadHome();
+                        return;
+                    }
+                    new Thread(() -> {
+                        try {
+                            FileUtils.deleteFile(cspCacheDir);
+                            ApiConfig.get().clearJarLoader();
+                            reloadHome();
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }).start();
+                }
             }
         });
         tvName.setOnLongClickListener(new View.OnLongClickListener() {
@@ -254,7 +297,10 @@ public class HomeActivity extends BaseActivity {
         tvWifi.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS));
+                try {
+                    startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS));
+                }catch (Exception ignored){
+                }
             }
         });
         // Button : Search --------------------------------------------
@@ -317,12 +363,35 @@ public class HomeActivity extends BaseActivity {
         setLoadSir(this.contentLayout);
         //mHandler.postDelayed(mFindFocus, 250);
     }
+    //站点切换
+    public static void homeRecf() {
+        int homeRec = Hawk.get(HawkConfig.HOME_REC, -1);
+        int limit = 2;
+        if (homeRec == limit) homeRec = -1;
+        homeRec++;
+        Hawk.put(HawkConfig.HOME_REC, homeRec);
+    }
+    
+    public static boolean reHome(Context appContext) {
+        Intent intent = new Intent(appContext, HomeActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        Bundle bundle = new Bundle();
+        bundle.putBoolean("useCache", true);
+        intent.putExtras(bundle);
+        appContext.startActivity(intent);
+        return true;
+    }
 
+    private boolean skipNextUpdate = false;	
     private void initViewModel() {
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
         sourceViewModel.sortResult.observe(this, new Observer<AbsSortXml>() {
             @Override
             public void onChanged(AbsSortXml absXml) {
+                if (skipNextUpdate) {
+                    skipNextUpdate = false;
+                    return;
+                }
                 showSuccess();
                 if (absXml != null && absXml.classes != null && absXml.classes.sortList != null) {
                     sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), absXml.classes.sortList, true));
@@ -330,6 +399,12 @@ public class HomeActivity extends BaseActivity {
                     sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), new ArrayList<>(), true));
                 }
                 initViewPager(absXml);
+                // takagen99 : Switch to show / hide source title
+                SourceBean home = ApiConfig.get().getHomeSourceBean();
+                if (HomeShow) {
+                    if (home != null && home.getName() != null && !home.getName().isEmpty()) tvName.setText(home.getName());
+                        tvName.clearAnimation();
+                }
             }
         });
     }
@@ -349,14 +424,6 @@ public class HomeActivity extends BaseActivity {
     }
 
     private void initData() {
-
-        // takagen99 : Switch to show / hide source title
-        SourceBean home = ApiConfig.get().getHomeSourceBean();
-        if (HomeShow) {
-            if (home != null && home.getName() != null && !home.getName().isEmpty())
-                tvName.setText(home.getName());
-        }
-
         // takagen99: If network available, check connected Wifi or Lan
         if (isNetworkAvailable()) {
             ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
@@ -379,15 +446,18 @@ public class HomeActivity extends BaseActivity {
         mGridView.requestFocus();
 
         if (dataInitOk && jarInitOk) {
-            showLoading();
             sourceViewModel.getSort(ApiConfig.get().getHomeSourceBean().getKey());
             if (hasPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
                 LOG.e("有");
             } else {
                 LOG.e("无");
             }
+            if (Hawk.get(HawkConfig.HOME_DEFAULT_SHOW, false)) {
+                jumpActivity(LivePlayActivity.class);
+            }         
             return;
         }
+        tvNameAnimation();
         showLoading();
         if (dataInitOk && !jarInitOk) {
             if (!ApiConfig.get().getSpider().isEmpty()) {
@@ -398,8 +468,9 @@ public class HomeActivity extends BaseActivity {
                         mHandler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-                                if (!useCacheConfig)
+                                if (!useCacheConfig) {
                                     Toast.makeText(HomeActivity.this, getString(R.string.hm_ok), Toast.LENGTH_SHORT).show();
+                                }
                                 initData();
                             }
                         }, 50);
@@ -413,13 +484,17 @@ public class HomeActivity extends BaseActivity {
                     @Override
                     public void error(String msg) {
                         jarInitOk = true;
-                        mHandler.post(new Runnable() {
+                        dataInitOk = true;
+                        mHandler.postDelayed(new Runnable() {
                             @Override
                             public void run() {
-                                Toast.makeText(HomeActivity.this, getString(R.string.hm_notok), Toast.LENGTH_SHORT).show();
+                                if ("".equals(msg))
+                                    Toast.makeText(HomeActivity.this, getString(R.string.hm_notok), Toast.LENGTH_SHORT).show();
+                                else
+                                    Toast.makeText(HomeActivity.this, msg, Toast.LENGTH_SHORT).show();
                                 initData();
                             }
-                        });
+                        },50);
                     }
                 });
             }
@@ -545,49 +620,61 @@ public class HomeActivity extends BaseActivity {
 
     @Override
     public void onBackPressed() {
-
-        // takagen99: Add check for VOD Delete Mode
+        //打断加载
+        if(isLoading()){
+            refreshEmpty();
+            return;
+        }
+        // 如果处于 VOD 删除模式，则退出该模式并刷新界面
         if (HawkConfig.hotVodDelete) {
             HawkConfig.hotVodDelete = false;
             UserFragment.homeHotVodAdapter.notifyDataSetChanged();
-        } else {
-            int i;
-            if (this.fragments.size() <= 0 || this.sortFocused >= this.fragments.size() || (i = this.sortFocused) < 0) {
-                exit();
+            return;
+        }
+
+        // 检查 fragments 状态
+        if (this.fragments.size() <= 0 || this.sortFocused >= this.fragments.size() || this.sortFocused < 0) {
+            doExit();
+            return;
+        }
+
+        BaseLazyFragment baseLazyFragment = this.fragments.get(this.sortFocused);
+        if (baseLazyFragment instanceof GridFragment) {
+            GridFragment grid = (GridFragment) baseLazyFragment;
+            // 如果当前 Fragment 能恢复之前保存的 UI 状态，则直接返回
+            if (grid.restoreView()) {
                 return;
             }
-            BaseLazyFragment baseLazyFragment = this.fragments.get(i);
-            if (baseLazyFragment instanceof GridFragment) {
-                View view = this.sortFocusView;
-                GridFragment grid = (GridFragment) baseLazyFragment;
-                if (grid.restoreView()) {
-                    return;
-                }// 还原上次保存的UI内容
-                if (view != null && !view.isFocused()) {
-                    this.sortFocusView.requestFocus();
-                } else if (this.sortFocused != 0) {
-                    this.mGridView.setSelection(0);
-                } else {
-                    exit();
-                }
-            } else if (baseLazyFragment instanceof UserFragment && UserFragment.tvHotListForGrid.canScrollVertically(-1)) {
-                UserFragment.tvHotListForGrid.scrollToPosition(0);
+            // 如果 sortFocusView 存在且没有获取焦点，则请求焦点
+            if (this.sortFocusView != null && !this.sortFocusView.isFocused()) {
+                this.sortFocusView.requestFocus();
+            }
+            // 如果当前不是第一个界面，则将列表设置到第一项
+            else if (this.sortFocused != 0) {
                 this.mGridView.setSelection(0);
             } else {
-                exit();
+                doExit();
             }
+        } else if (baseLazyFragment instanceof UserFragment && UserFragment.tvHotListForGrid.canScrollVertically(-1)) {
+            // 如果 UserFragment 列表可以向上滚动，则滚动到顶部
+            UserFragment.tvHotListForGrid.scrollToPosition(0);
+            this.mGridView.setSelection(0);
+        } else {
+            doExit();
         }
     }
 
-    private void exit() {
+    private void doExit() {
+        // 如果两次返回间隔小于 2000 毫秒，则退出应用
         if (System.currentTimeMillis() - mExitTime < 2000) {
-            //这一段借鉴来自 q群老哥 IDCardWeb
+            AppManager.getInstance().finishAllActivity();
             EventBus.getDefault().unregister(this);
-            AppManager.getInstance().appExit(0);
             ControlManager.get().stopServer();
             finish();
-            super.onBackPressed();
+            android.os.Process.killProcess(android.os.Process.myPid());
+            System.exit(0);
         } else {
+            // 否则仅提示用户，再按一次退出应用
             mExitTime = System.currentTimeMillis();
             Toast.makeText(mContext, getString(R.string.hm_exit), Toast.LENGTH_SHORT).show();
         }
@@ -602,6 +689,7 @@ public class HomeActivity extends BaseActivity {
         if (Hawk.get(HawkConfig.HOME_SHOW_SOURCE, false)) {
             if (home != null && home.getName() != null && !home.getName().isEmpty()) {
                 tvName.setText(home.getName());
+                tvName.clearAnimation();
             }
         } else {
             tvName.setText(R.string.app_name);
@@ -773,14 +861,14 @@ public class HomeActivity extends BaseActivity {
 
             TvRecyclerView tvRecyclerView = dialog.findViewById(R.id.list);
             tvRecyclerView.setLayoutManager(new V7GridLayoutManager(dialog.getContext(), spanCount));
-            LinearLayout cl_root = dialog.findViewById(R.id.cl_root);
+            ConstraintLayout cl_root = dialog.findViewById(R.id.cl_root);
             ViewGroup.LayoutParams clp = cl_root.getLayoutParams();
             if (spanCount != 1) {
                 clp.width = AutoSizeUtils.mm2px(dialog.getContext(), 400 + 260 * (spanCount - 1));
             }
 
             dialog.setTip(getString(R.string.dia_source));
-            dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<SourceBean>() {
+            dialog.setAdapter(tvRecyclerView, new SelectDialogAdapter.SelectDialogInterface<SourceBean>() {
                 @Override
                 public void click(SourceBean value, int pos) {
                     ApiConfig.get().setSourceBean(value);
@@ -828,6 +916,23 @@ public class HomeActivity extends BaseActivity {
         HomeActivity.this.startActivity(intent);
     }
 
+    private void refreshEmpty() {
+        skipNextUpdate=true;
+        showSuccess();
+        sortAdapter.setNewData(DefaultConfig.adjustSort(ApiConfig.get().getHomeSourceBean().getKey(), new ArrayList<>(), true));
+        initViewPager(null);
+        tvName.clearAnimation();
+    }
+
+    private void tvNameAnimation()
+    {
+        AlphaAnimation blinkAnimation = new AlphaAnimation(0.0f, 1.0f);
+        blinkAnimation.setDuration(500);
+        blinkAnimation.setStartOffset(20);
+        blinkAnimation.setRepeatMode(Animation.REVERSE);
+        blinkAnimation.setRepeatCount(Animation.INFINITE);
+        tvName.startAnimation(blinkAnimation);
+    }
 //    public void onClick(View v) {
 //        FastClickCheckUtil.check(v);
 //        if (v.getId() == R.id.tvFind) {

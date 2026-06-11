@@ -9,6 +9,8 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Message;
 import android.os.Parcelable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
@@ -120,11 +122,14 @@ public class BaseVideoView<P extends AbstractPlayer> extends FrameLayout
      * 循环播放
      */
     protected boolean mIsLooping;
+    protected boolean mPlayFromZeroPosition = false;
 
     /**
      * {@link #mPlayerContainer}背景色，默认黑色
      */
     private final int mPlayerBackgroundColor;
+
+    private Handler mHandler;
 
     public BaseVideoView(@NonNull Context context) {
         this(context, null);
@@ -168,6 +173,10 @@ public class BaseVideoView<P extends AbstractPlayer> extends FrameLayout
         this.addView(mPlayerContainer, params);
     }
 
+    public void setmHandler(Handler mHandler) {
+        this.mHandler = mHandler;
+    }
+
     /**
      * 设置{@link #mPlayerContainer}的背景色
      */
@@ -203,9 +212,14 @@ public class BaseVideoView<P extends AbstractPlayer> extends FrameLayout
         if (mEnableAudioFocus) {
             mAudioFocusHelper = new AudioFocusHelper(this);
         }
-        //读取播放进度
-        if (mProgressManager != null) {
-            mCurrentPosition = mProgressManager.getSavedProgress(mProgressKey == null ? mUrl : mProgressKey);
+        if (!mPlayFromZeroPosition) {
+            //读取播放进度
+            if (mProgressManager != null) {
+                mCurrentPosition = mProgressManager.getSavedProgress(mProgressKey == null ? mUrl : mProgressKey);
+            }
+        } else {
+            mCurrentPosition = 0;
+            mPlayFromZeroPosition = false;
         }
         initPlayer();
         addDisplay();
@@ -528,6 +542,13 @@ public class BaseVideoView<P extends AbstractPlayer> extends FrameLayout
     }
 
     /**
+     * 停止播放
+     */
+    public void stopPlay() {
+        mMediaPlayer.stop();
+    }
+
+    /**
      * 播放信息回调，播放中的缓冲开始与结束，开始渲染视频第一帧，视频旋转信息
      */
     @Override
@@ -553,9 +574,16 @@ public class BaseVideoView<P extends AbstractPlayer> extends FrameLayout
      * 视频播放出错回调
      */
     @Override
-    public void onError() {
+    public void onError(int code, String msg) {
         mPlayerContainer.setKeepScreenOn(false);
         setPlayState(STATE_ERROR);
+
+        if (mHandler != null) {
+            Message sendmsg = Message.obtain();
+            sendmsg.what = 300;
+            sendmsg.obj = msg;
+            mHandler.sendMessage(sendmsg);
+        }
     }
 
     /**
@@ -677,6 +705,10 @@ public class BaseVideoView<P extends AbstractPlayer> extends FrameLayout
         if (mMediaPlayer != null) {
             mMediaPlayer.setLooping(looping);
         }
+    }
+
+    public void setPlayFromZeroPositionOnce(boolean mPlayFromZeroPosition) {
+        this.mPlayFromZeroPosition = mPlayFromZeroPosition;
     }
 
     /**

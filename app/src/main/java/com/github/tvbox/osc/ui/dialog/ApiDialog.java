@@ -16,9 +16,9 @@ import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.ui.activity.HomeActivity;
 import com.github.tvbox.osc.ui.adapter.ApiHistoryDialogAdapter;
 import com.github.tvbox.osc.ui.tv.QRCodeGen;
+import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.hjq.permissions.OnPermissionCallback;
-import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
 import com.orhanobut.hawk.Hawk;
 
@@ -43,6 +43,7 @@ public class ApiDialog extends BaseDialog {
     private final EditText inputApi;
     private final EditText inputLive;
     private final EditText inputEPG;
+    private final EditText inputProxy;
 
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void refresh(RefreshEvent event) {
@@ -54,6 +55,9 @@ public class ApiDialog extends BaseDialog {
         }
         if (event.type == RefreshEvent.TYPE_EPG_URL_CHANGE) {
             inputEPG.setText((String) event.obj);
+        }
+        if (event.type == RefreshEvent.TYPE_PROXYS_CHANGE) {
+            inputProxy.setText((String) event.obj);
         }
     }
 
@@ -71,6 +75,8 @@ public class ApiDialog extends BaseDialog {
         inputLive.setText(Hawk.get(HawkConfig.LIVE_URL, ""));
         inputEPG = findViewById(R.id.input_epg);
         inputEPG.setText(Hawk.get(HawkConfig.EPG_URL, ""));
+        inputProxy = findViewById(R.id.input_proxy);
+        inputProxy.setText(Hawk.get(HawkConfig.PROXY_SERVER, ""));
 
         findViewById(R.id.inputSubmit).setOnClickListener(new View.OnClickListener() {
             @Override
@@ -78,6 +84,7 @@ public class ApiDialog extends BaseDialog {
                 String newApi = inputApi.getText().toString().trim();
                 String newLive = inputLive.getText().toString().trim();
                 String newEPG = inputEPG.getText().toString().trim();
+                String newProxyServer = inputProxy.getText().toString().trim();
                 // takagen99: Convert all to clan://localhost format
                 if (newApi.startsWith("file://")) {
                     newApi = newApi.replace("file://", "clan://localhost/");
@@ -114,6 +121,8 @@ public class ApiDialog extends BaseDialog {
                         EPGHistory.remove(20);
                     Hawk.put(HawkConfig.EPG_HISTORY, EPGHistory);
                 }
+                // Capture oroxy server input into Settings
+                Hawk.put(HawkConfig.PROXY_SERVER, newProxyServer);
             }
         });
         findViewById(R.id.apiHistory).setOnClickListener(new View.OnClickListener() {
@@ -203,11 +212,11 @@ public class ApiDialog extends BaseDialog {
         findViewById(R.id.storagePermission).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (XXPermissions.isGranted(getContext(), Permission.Group.STORAGE)) {
+                if (XXPermissions.isGranted(getContext(), DefaultConfig.StoragePermissionGroup())) {
                     Toast.makeText(getContext(), "已获得存储权限", Toast.LENGTH_SHORT).show();
                 } else {
                     XXPermissions.with(getContext())
-                            .permission(Permission.Group.STORAGE)
+                            .permission(DefaultConfig.StoragePermissionGroup())
                             .request(new OnPermissionCallback() {
                                 @Override
                                 public void onGranted(List<String> permissions, boolean all) {

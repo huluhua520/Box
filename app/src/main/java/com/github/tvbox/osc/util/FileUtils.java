@@ -1,29 +1,47 @@
 package com.github.tvbox.osc.util;
 
+import android.os.Environment;
 import android.text.TextUtils;
+import android.util.Base64;
 
+import com.github.catvod.utils.Path;
 import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.server.ControlManager;
+import com.github.tvbox.osc.util.StringUtils;
 import com.github.tvbox.osc.util.urlhttp.OkHttpUtil;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import com.github.tvbox.quickjs.JSUtils;
-
+import com.lzy.okgo.OkGo;
+import com.lzy.okgo.model.HttpHeaders;
+import com.orhanobut.hawk.Hawk;
 import org.json.JSONObject;
-
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import okhttp3.Response;
 
 public class FileUtils {
 
     public static File open(String str) {
-        return new File(App.getInstance().getExternalCacheDir().getAbsolutePath() + "/qjscache_" + str + ".js");
+        return new File(getExternalCachePath() + "/qjscache_" + str + ".js");
     }
 
     public static boolean writeSimple(byte[] data, File dst) {
@@ -54,6 +72,31 @@ public class FileUtils {
         return null;
     }
 
+    public static String readFileToString(String path, String charsetName) {
+        // 定义返回结果
+        StringBuilder jsonString = new StringBuilder();
+
+        BufferedReader in = null;
+        try {
+            in = new BufferedReader(new InputStreamReader(new FileInputStream(path), charsetName));// 读取文件
+            String thisLine;
+            while ((thisLine = in.readLine()) != null) {
+                jsonString.append(thisLine);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (IOException el) {
+                }
+            }
+        }
+        // 返回拼接好的JSON String
+        return jsonString.toString();
+    }
+
     public static void copyFile(File source, File dest) throws IOException {
         InputStream is = null;
         OutputStream os = null;
@@ -70,7 +113,10 @@ public class FileUtils {
             os.close();
         }
     }
-
+    public static String getRootPath() {
+        return Environment.getExternalStorageDirectory()
+            .getAbsolutePath();
+    }
     public static void recursiveDelete(File file) {
         try {
             if (!file.exists())
@@ -86,60 +132,74 @@ public class FileUtils {
         }
     }
 
+    //JS  工具方法
+    private static final Pattern URL_JOIN = Pattern.compile("^http.*\\.(js|txt|json|m3u)", Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);
     public static String loadModule(String name) {
+        String rel = null;
         try {
-            if(name.contains("cheerio.min.js")){
-                name = "cheerio.min.js";
-            } else if(name.contains("crypto-js.js")){
-                name = "crypto-js.js";
-            } else if(name.contains("dayjs.min.js")){
-                name = "dayjs.min.js";
-            } else if(name.contains("uri.min.js")){
-                name = "uri.min.js";
-            } else if(name.contains("underscore-esm-min.js")){
-                name = "underscore-esm-min.js";
+            if (name.contains("gbk.js")) {
+                name = "gbk.js";
+            } else if (name.contains("模板.js")) {
+                name = "模板.js";
+            } else if (name.contains("cat.js")) {
+                name = "cat.js";
             }
-            if (name.startsWith("http://") || name.startsWith("https://")) {
-                String cache = getCache(MD5.encode(name));
-                if (JSUtils.isEmpty(cache)) {
-                    String netStr = OkHttpUtil.get(name);
-                    if (!TextUtils.isEmpty(netStr)) {
-                        setCache(604800, MD5.encode(name), netStr);
+            LOG.i("echo-loadModule "+name);
+            Matcher m = URL_JOIN.matcher(name);
+            if (m.find()) {
+                if (!Hawk.get(HawkConfig.DEBUG_OPEN, false)) {
+                    String cache = getCache(MD5.encode(name));
+                    rel= cache;
+                    if (StringUtils.isEmpty(cache)) {
+                        String netStr = get(name);
+                        if (!TextUtils.isEmpty(netStr)) {
+                            setCache(604800, MD5.encode(name), netStr);
+                        }
+                        rel= netStr;
                     }
-                    return netStr;
+                } else {
+                    rel= get(name);
                 }
-                return cache;
             } else if (name.startsWith("assets://")) {
-                return getAsOpen(name.substring(9));
+                rel= getAsOpen(name.substring(9));
             } else if (isAsFile(name, "js/lib")) {
-                return getAsOpen("js/lib/" + name);
+                rel=getAsOpen("js/lib/" + name);
             } else if (name.startsWith("file://")) {
-                return OkHttpUtil.get(ControlManager.get().getAddress(true) + "file/" + name.replace("file:///", "").replace("file://", ""));
+                rel=get(ControlManager.get()
+                        .getAddress(true) + "file/" + name.replace("file:///", "")
+                        .replace("file://", ""));
             } else if (name.startsWith("clan://localhost/")) {
-                return OkHttpUtil.get(ControlManager.get().getAddress(true) + "file/" + name.replace("clan://localhost/", ""));
+                rel=get(ControlManager.get()
+                        .getAddress(true) + "file/" + name.replace("clan://localhost/", ""));
             } else if (name.startsWith("clan://")) {
                 String substring = name.substring(7);
                 int indexOf = substring.indexOf(47);
-                return OkHttpUtil.get("http://" + substring.substring(0, indexOf) + "/file/" + substring.substring(indexOf + 1));
+                rel=get("http://" + substring.substring(0, indexOf) + "/file/" + substring.substring(indexOf + 1));
             }
         } catch (Exception e) {
             e.printStackTrace();
             return name;
         }
-        return name;
+        return rel;
     }
 
-    public static boolean isAsFile(String name, String path) {
-        try {
-            for (String fname : App.getInstance().getAssets().list(path)) {
-                if (fname.equals(name.trim())) {
-                    return true;
-                }
+
+    private static final Map<String, Set<String>> cachedDirFiles = new HashMap<>();
+    public static boolean isAsFile(String name,String dir) {
+        // 1. 先从缓存里取目录列表
+        Set<String> files = cachedDirFiles.get(dir);
+        if (files == null) {
+            LOG.i("echo-读取AssetsList");
+            try {
+                String[] list = App.getInstance().getAssets().list(dir);
+                files = new HashSet<>(Arrays.asList(list));
+            } catch (IOException e) {
+                files = Collections.emptySet();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+            cachedDirFiles.put(dir, files);
         }
-        return false;
+        // 2. 内存查找
+        return files.contains(name.trim());
     }
 
     public static String getAsOpen(String name) {
@@ -165,13 +225,24 @@ public class FileUtils {
                 return "";
             }
             JsonObject asJsonObject = (new Gson().fromJson(code, JsonObject.class)).getAsJsonObject();
-            if (((long) asJsonObject.get("expires").getAsInt()) > System.currentTimeMillis() / 1000) {
-                return asJsonObject.get("data").getAsString();
+            if (((long) asJsonObject.get("expires").getAsInt()) <= System.currentTimeMillis() / 1000) {
+                recursiveDelete(open(name));
             }
-            recursiveDelete(open(name));
-            return "";
+            return asJsonObject.get("data").getAsString();
         } catch (Exception e4) {
             return "";
+        }
+    }
+
+    public static byte[] getCacheByte(String name) {
+        try {
+            File file = open("B_" + name);
+            if (file.exists()) {
+                return readSimple(file);
+            }
+            return null;
+        } catch (Exception e4) {
+            return null;
         }
     }
 
@@ -186,6 +257,48 @@ public class FileUtils {
         }
     }
 
+    public static void setCacheByte(String name, byte[] data) {
+        try {
+            writeSimple(byteMerger("//DRPY".getBytes(),Base64.encode(data, Base64.URL_SAFE)), open("B_" + name));
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static byte[] byteMerger(byte[] bt1, byte[] bt2){
+        byte[] bt3 = new byte[bt1.length+bt2.length];
+        System.arraycopy(bt1, 0, bt3, 0, bt1.length);
+        System.arraycopy(bt2, 0, bt3, bt1.length, bt2.length);
+        return bt3;
+    }
+
+    public static String get(String str) {
+        return get(str, null);
+    }
+
+    public static String get(String str, Map<String, String> headerMap) {
+        try {
+            HttpHeaders h = new HttpHeaders();
+            Response response = null;
+            if (headerMap != null) {
+                for (String key : headerMap.keySet()) {
+                    h.put(key, headerMap.get(key));
+                }
+                response = OkGo.<String>get(str).headers(h).execute();
+            } else {
+                response =OkGo.<String>get(str).headers("User-Agent", str.startsWith("https://gitcode.net/") ? UA.random() : "okhttp/3.15").execute();
+            }
+            if (response.isSuccessful() && response.body() != null){
+                return new String(response.body().bytes(), "UTF-8");
+            } else {
+                return "";
+            }
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+
     public static File getCacheDir() {
         return App.getInstance().getCacheDir();
     }
@@ -193,7 +306,115 @@ public class FileUtils {
         return App.getInstance().getExternalCacheDir();
     }
     public static String getExternalCachePath() {
-        return getExternalCacheDir().getAbsolutePath();
+        //部分机器getExternalCacheDir()会返回空
+        File externalCacheDir = getExternalCacheDir();
+        if (externalCacheDir == null){
+            return getCachePath();
+        }
+        return externalCacheDir.getAbsolutePath();
     }
 
+    public static String getCachePath() {
+        return getCacheDir().getAbsolutePath();
+    }
+
+    public static void cleanPlayerCache() {
+        recursiveDelete(new File(getCachePath() + File.separator + "thunder"));
+        recursiveDelete(new File(getExternalCachePath() + File.separator + "ijkcaches"));
+        recursiveDelete(new File(getExternalCachePath() + File.separator + "jpali" + File.separator + "Downloads"));
+    }
+
+    public static String getFileName(String filePath) {
+        if (TextUtils.isEmpty(filePath)) return "";
+        String fileName = filePath;
+        int p = fileName.lastIndexOf(File.separatorChar);
+        if (p != -1) {
+            fileName = fileName.substring(p + 1);
+        }
+        return fileName;
+    }
+
+    public static String getFileNameWithoutExt(String filePath) {
+        if (TextUtils.isEmpty(filePath)) return "";
+        String fileName = filePath;
+        int p = fileName.lastIndexOf(File.separatorChar);
+        if (p != -1) {
+            fileName = fileName.substring(p + 1);
+        }
+        p = fileName.indexOf('.');
+        if (p != -1) {
+            fileName = fileName.substring(0, p);
+        }
+        return fileName;
+    }
+
+    public static String getFileExt(String fileName) {
+        if (TextUtils.isEmpty(fileName)) return "";
+        int p = fileName.lastIndexOf('.');
+        if (p != -1) {
+            return fileName.substring(p)
+                .toLowerCase();
+        }
+        return "";
+    }
+
+    public static boolean hasExtension(String path) {
+        int lastDotIndex = path.lastIndexOf(".");
+        int lastSlashIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+        // 如果路径中有点号，并且点号在最后一个斜杠之后，认为有后缀
+        return lastDotIndex > lastSlashIndex && lastDotIndex < path.length() - 1;
+    }
+
+    public static String read(String path) {
+        try {
+            return read(new FileInputStream(getLocal(path)));
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    public static String read(InputStream is) {
+        try {
+            byte[] data = new byte[is.available()];
+            is.read(data);
+            is.close();
+            return new String(data, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return "";
+        }
+    }
+    public static File getLocal(String path) {
+        File file1 = new File(path.replace("file:/", ""));
+        File file2 = new File(path.replace("file:/", Environment.getExternalStorageDirectory().getAbsolutePath()));
+        return file2.exists() ? file2 : file1.exists() ? file1 : new File(path);
+    }
+    public static void deleteFile(File file) {
+        if (!file.exists()) return;
+        if (file.isFile()) {
+            if (file.canWrite()) file.delete();
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] files = file.listFiles();
+            if (files == null || files.length == 0) {
+                if (file.canWrite()) file.delete();
+                return;
+            }
+            for(File one : files) {
+                deleteFile(one);
+            }
+        }
+        return;
+    }
+
+    public static String getFilePath() {
+        return App.getInstance().getFilesDir().getAbsolutePath();
+    }
+
+    public static boolean isWeekAgo(File file) {
+        long oneWeekMillis = 15L * 24 * 60 * 60 * 1000;
+        long timeDiff = System.currentTimeMillis() - file.lastModified();
+        return timeDiff > oneWeekMillis;
+    }
 }

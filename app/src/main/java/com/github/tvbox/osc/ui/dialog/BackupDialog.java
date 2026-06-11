@@ -2,8 +2,10 @@ package com.github.tvbox.osc.ui.dialog;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Environment;
+import android.os.Handler;
 import android.view.View;
 import android.widget.Toast;
 
@@ -15,9 +17,9 @@ import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.data.AppDataManager;
 import com.github.tvbox.osc.ui.activity.HomeActivity;
 import com.github.tvbox.osc.ui.adapter.BackupAdapter;
+import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.FileUtils;
 import com.hjq.permissions.OnPermissionCallback;
-import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 
@@ -63,11 +65,11 @@ public class BackupDialog extends BaseDialog {
         findViewById(R.id.storagePermission).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (XXPermissions.isGranted(getContext(), Permission.Group.STORAGE)) {
+                if (XXPermissions.isGranted(getContext(), DefaultConfig.StoragePermissionGroup())) {
                     Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.set_permission_ok), Toast.LENGTH_SHORT).show();
                 } else {
                     XXPermissions.with(getContext())
-                            .permission(Permission.Group.STORAGE)
+                            .permission(DefaultConfig.StoragePermissionGroup())
                             .request(new OnPermissionCallback() {
                                 @Override
                                 public void onGranted(List<String> permissions, boolean all) {
@@ -145,6 +147,12 @@ public class BackupDialog extends BaseDialog {
                             }
                         }
                         Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.set_rest_ok), Toast.LENGTH_SHORT).show();
+                        new Handler().postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                restartApp();
+                            }
+                        }, 3000);
                     } else {
                         Toast.makeText(getContext(), HomeActivity.getRes().getString(R.string.set_rest_fail_hk), Toast.LENGTH_SHORT).show();
                     }
@@ -154,6 +162,17 @@ public class BackupDialog extends BaseDialog {
             }
         } catch (Throwable e) {
             e.printStackTrace();
+        }
+    }
+    private void restartApp() {
+        Context context = getContext();
+        if (context != null) {
+            Intent i = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+            if (i != null) {
+                i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                context.startActivity(i);
+                System.exit(0);
+            }
         }
     }
 
